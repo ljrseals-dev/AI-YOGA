@@ -1,4 +1,5 @@
-import os, sys, tempfile
+import os, sys, tempfile, types
+from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from weighted_scoring import load_weights, select_subset, combo_score, gate, unit_rows, prune_pool
@@ -97,6 +98,50 @@ def test_select_subset_exposes_pruned_out():
     result = select_subset(X, np.ones(6), size=2, pool=4)
     assert result["pool_size"] == 4
     assert result["pruned_out"] is True
+
+def _assert_numpy_rng_state_equal(actual, expected):
+    assert actual[0] == expected[0]
+    assert np.array_equal(actual[1], expected[1])
+    assert actual[2:] == expected[2:]
+
+def test_run_annchor_persistent_rng_state_restoration_on_success():
+    import baseline
+
+    class FakeAnnchor:
+        def __init__(self, *args, **kwargs):
+            self.neighbor_graph = (np.array([[1], [0]]), np.zeros((2, 1)))
+        def fit(self):
+            np.random.random()
+
+    fake_module = types.SimpleNamespace(Annchor=FakeAnnchor)
+    cfg = {"anchors": 1, "k": 1, "p_work": 0.1}
+    np.random.seed(812)
+    before = np.random.get_state()
+    with patch.dict(sys.modules, {"annchor": fake_module}):
+        baseline.run_annchor(np.ones((2, 2)), "euclidean", cfg, seed=7)
+    _assert_numpy_rng_state_equal(np.random.get_state(), before)
+
+def test_run_annchor_persistent_rng_state_restoration_on_exception():
+    import baseline
+
+    class FakeAnnchor:
+        def __init__(self, *args, **kwargs):
+            pass
+        def fit(self):
+            np.random.random()
+            raise RuntimeError("deliberate test failure")
+
+    fake_module = types.SimpleNamespace(Annchor=FakeAnnchor)
+    cfg = {"anchors": 1, "k": 1, "p_work": 0.1}
+    np.random.seed(913)
+    before = np.random.get_state()
+    with patch.dict(sys.modules, {"annchor": fake_module}):
+        try:
+            baseline.run_annchor(np.ones((2, 2)), "euclidean", cfg, seed=9)
+            raise AssertionError("expected RuntimeError")
+        except RuntimeError as exc:
+            assert str(exc) == "deliberate test failure"
+    _assert_numpy_rng_state_equal(np.random.get_state(), before)
 
 if __name__ == "__main__":      # runs without pytest: python test_weighted.py
     failures = []

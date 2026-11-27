@@ -140,21 +140,27 @@ def run_annchor(X, metric, cfg, seed):
     if metric == "wasserstein":
         n = X.shape[1]
         kw["func_kwargs"] = {"cost_matrix": np.abs(np.subtract.outer(np.arange(n), np.arange(n))).astype(float)}
-    np.random.seed(seed)
-    t0 = time.perf_counter()
-    ann = annchor.Annchor(X, func, n_anchors=cfg["anchors"], n_neighbors=cfg["k"],
-                          p_work=cfg["p_work"], **kw)
-    ann.fit()
-    el = time.perf_counter() - t0
-    graph = ann.neighbor_graph
-    cross = None
-    try:   # secondary cross-check using ANNchor's own tools
-        bf = annchor.BruteForce(X, func, **kw); bf.fit()
-        err = annchor.compare_neighbor_graphs(bf.neighbor_graph, graph, cfg["k"])
-        cross = dict(incorrect=int(err), total=cfg["k"] * len(X))
-    except Exception as e:
-        cross = dict(error=str(e))
-    return graph, el, cross
+    saved_state = np.random.get_state()
+    try:
+        np.random.seed(seed)
+        t0 = time.perf_counter()
+        ann = annchor.Annchor(X, func, n_anchors=cfg["anchors"], n_neighbors=cfg["k"],
+                              p_work=cfg["p_work"], **kw)
+        ann.fit()
+        el = time.perf_counter() - t0
+        graph = ann.neighbor_graph
+        cross = None
+        try:
+            bf = annchor.BruteForce(X, func, **kw); bf.fit()
+            err = annchor.compare_neighbor_graphs(bf.neighbor_graph, graph, cfg["k"])
+            cross = dict(incorrect=int(err), total=cfg["k"] * len(X))
+        except Exception as e:
+            cross = dict(error=str(e))
+        return graph, el, cross
+    finally:
+        # Restores persistent process-wide state even for KeyboardInterrupt/SystemExit.
+        # This is not thread isolation: concurrent code can observe the temporary seed.
+        np.random.set_state(saved_state)
 
 # ---------------------------------------------------------------- gaffer (UNTESTED)
 def persist_gaffer(url, items, top, verdicts, run_id):

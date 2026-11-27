@@ -77,17 +77,24 @@ def rows_without_self(indices, k):
         out.append(r)
     return out
 
-def recall_at_k(true_rows, approx_rows, D, k, tol=1e-9):
-    """Fraction of true k-NN recovered. A returned neighbour also counts if its
-    distance ties the k-th true distance (handles equal-distance ambiguity)."""
-    hit = tot = 0
-    for i, (t, a) in enumerate(zip(true_rows, approx_rows)):
+def recall_at_k(true_rows, approx_rows, D, k, tol=1e-9, normalize="expected"):
+    """Fraction of true k-NN recovered, accepting distance ties at the k-th
+    true-neighbour distance. Expected mode uses fixed k * row-count denominator,
+    so absent and short approximate rows count as misses.
+    """
+    if normalize != "expected":
+        raise ValueError("normalize must be 'expected'")
+    hit = 0
+    for i, t in enumerate(true_rows):
+        a = approx_rows[i] if i < len(approx_rows) else []
+        if not t:
+            continue
         kth = D[i, t[-1]]
         tset = set(t)
         for j in a[:k]:
             hit += (j in tset) or (D[i, j] <= kth + tol)
-        tot += k
-    return hit / tot if tot else 0.0
+    total = k * len(true_rows)
+    return hit / total if total else 0.0
 
 # ---------------------------------------------------------------- enumeration
 def streamed_enumeration(S, size, top_n=200, max_combos=5_000_000, force=False):

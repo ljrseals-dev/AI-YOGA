@@ -36,7 +36,44 @@ def test_noise_is_denied():
     assert select_subset(X, v, 3, pool=10)["verdict"] == "DENY"
 
 
-if __name__ == "__main__":      # runs without pytest: python tests/test_weighted.py
+def test_evidence_floor_validation():
+    import json
+    for value in (0, -0.1, 1.01, "high", None, True):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"evidence_floor": value}, f)
+            path = f.name
+        try:
+            try:
+                load_weights(path)
+                raise AssertionError(f"expected ValueError for evidence_floor={value!r}")
+            except ValueError as exc:
+                assert "evidence_floor" in str(exc)
+        finally:
+            os.unlink(path)
+
+def test_nonnumeric_scoring_weight_rejected():
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write('{"coherence": "high"}')
+        path = f.name
+    try:
+        try:
+            load_weights(path)
+            raise AssertionError("expected ValueError")
+        except ValueError as exc:
+            assert "coherence" in str(exc)
+    finally:
+        os.unlink(path)
+
+
+if __name__ == "__main__":      # runs without pytest: python test_weighted.py
+    failures = []
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
-            fn(); print("ok", name)
+            try:
+                fn()
+                print("ok", name)
+            except Exception as exc:
+                failures.append((name, exc))
+                print("FAIL", name, "--", exc)
+    if failures:
+        raise SystemExit(f"{len(failures)} test(s) failed")

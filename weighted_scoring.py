@@ -24,9 +24,20 @@ def load_weights(path=None):
     if path:
         with open(path) as f:
             w.update({k: v for k, v in json.load(f).items() if not k.startswith("_")})
+    for key in ("coherence", "weakest_link", "trust", "evidence_floor"):
+        value = w[key]
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
+            raise ValueError(f"{key} must be a finite number; got {value!r}")
+        w[key] = float(value)
     parts = [w["coherence"], w["weakest_link"], w["trust"]]
     if any(p < 0 for p in parts) or sum(parts) <= 0:
         raise ValueError("weights must be non-negative with a positive sum")
+    if not 0 < w["evidence_floor"] <= 1:
+        raise ValueError(
+            f"evidence_floor must satisfy 0 < evidence_floor <= 1; "
+            f"got {w['evidence_floor']!r}"
+        )
     total = sum(parts)
     w["coherence"], w["weakest_link"], w["trust"] = (p / total for p in parts)
     return w

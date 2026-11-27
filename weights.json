@@ -1,0 +1,7 @@
+{
+  "_comment": "Weights for the composite score S(C). Non-negative; they are normalized to sum to 1 at load time.",
+  "coherence": 0.50,
+  "weakest_link": 0.30,
+  "trust": 0.20,
+  "evidence_floor": 0.30
+}

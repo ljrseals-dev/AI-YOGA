@@ -1,0 +1,15 @@
+{
+  "types": {
+    "id.string": {
+      "class": "java.lang.String"
+    },
+    "property.string": {
+      "class": "java.lang.String",
+      "aggregateFunction": { "class": "uk.gov.gchq.koryphe.impl.binaryoperator.StringDeduplicateConcat" }
+    },
+    "property.max.double": {
+      "class": "java.lang.Double",
+      "aggregateFunction": { "class": "uk.gov.gchq.koryphe.impl.binaryoperator.Max" }
+    }
+  }
+}

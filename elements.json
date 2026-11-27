@@ -1,0 +1,34 @@
+{
+  "entities": {
+    "Item": {
+      "description": "A candidate item with a JSON-encoded feature vector",
+      "vertex": "id.string",
+      "properties": {
+        "feature_vector": "property.string",
+        "source": "property.string"
+      }
+    },
+    "Combination": {
+      "description": "A scored combination of items",
+      "vertex": "id.string",
+      "properties": {
+        "item_ids": "property.string",
+        "score": "property.max.double",
+        "method": "property.string",
+        "objective_name": "property.string"
+      }
+    },
+    "CriticVerdict": {
+      "description": "Governance verdict for a result set",
+      "vertex": "id.string",
+      "properties": {
+        "decision": "property.string",
+        "reason": "property.string",
+        "evidence_floor": "property.max.double",
+        "pipeline": "property.string",
+        "run_id": "property.string"
+      }
+    }
+  },
+  "edges": {}
+}

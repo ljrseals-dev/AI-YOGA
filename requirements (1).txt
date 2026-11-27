@@ -1,0 +1,4 @@
+numpy>=1.21
+# optional:
+# annchor @ git+https://github.com/gchq/annchor.git
+# gafferpy @ git+https://github.com/gchq/gafferpy.git

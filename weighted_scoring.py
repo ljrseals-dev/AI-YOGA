@@ -64,15 +64,14 @@ def gate(score, floor):
 
 
 def prune_pool(S, v, pool, k_nn=5):
-    """Cheap pre-filter: keep the `pool` items with the best blend of trust and
-    local density. Swap in an ANNchor k-NN graph here when the metric is slow."""
+    """Return (retained_indices, truncated) after trust/density pre-filtering."""
     n = len(v)
     if pool >= n:
-        return list(range(n))
+        return list(range(n)), False
     S2 = S.copy(); np.fill_diagonal(S2, -np.inf)
     dens = np.sort(S2, axis=1)[:, -min(k_nn, n - 1):].mean(axis=1)
     rank = 0.5 * np.asarray(v) + 0.5 * dens
-    return sorted(int(i) for i in np.argsort(-rank)[:pool])
+    return sorted(int(i) for i in np.argsort(-rank)[:pool]), True
 
 
 def select_subset(X, priors, size, weights=None, pool=24, top_n=5, max_combos=2_000_000):
@@ -83,7 +82,7 @@ def select_subset(X, priors, size, weights=None, pool=24, top_n=5, max_combos=2_
     if len(v) != len(X):
         raise ValueError("priors must have one value per item")
     S = X @ X.T
-    cand = prune_pool(S, v, pool)
+    cand, pruned_out = prune_pool(S, v, pool)
     if math.comb(len(cand), size) > max_combos:
         raise ValueError("too many combinations; lower pool or size")
     heap = []
@@ -102,4 +101,5 @@ def select_subset(X, priors, size, weights=None, pool=24, top_n=5, max_combos=2_
         "verdict": gate(top[0], w["evidence_floor"]),
         "runner_ups": [{"indices": list(b[1]), "score": b[0]} for b in best[1:]],
         "pool_size": len(cand),
+        "pruned_out": pruned_out,
     }

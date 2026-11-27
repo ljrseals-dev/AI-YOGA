@@ -1,7 +1,7 @@
 import os, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
-from weighted_scoring import load_weights, select_subset, combo_score, gate, unit_rows
+from weighted_scoring import load_weights, select_subset, combo_score, gate, unit_rows, prune_pool
 
 def test_weights_normalize():
     w = load_weights()
@@ -82,6 +82,21 @@ def test_recall_returned_uses_returned_edge_denominator():
         true_rows, approx_rows, D, 2, normalize="returned"
     ) - (1.0 / 3.0)) < 1e-12
 
+
+def test_prune_pool_reports_truncation():
+    S = np.eye(4, dtype=float)
+    kept, truncated = prune_pool(S, np.ones(4), pool=2)
+    assert len(kept) == 2
+    assert truncated is True
+    kept_all, truncated_all = prune_pool(S, np.ones(4), pool=4)
+    assert kept_all == [0, 1, 2, 3]
+    assert truncated_all is False
+
+def test_select_subset_exposes_pruned_out():
+    X = np.random.default_rng(12).normal(size=(6, 4))
+    result = select_subset(X, np.ones(6), size=2, pool=4)
+    assert result["pool_size"] == 4
+    assert result["pruned_out"] is True
 
 if __name__ == "__main__":      # runs without pytest: python test_weighted.py
     failures = []

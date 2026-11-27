@@ -1,7 +1,8 @@
-import os, sys, tempfile
+import os, sys, tempfile, types
+from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
-from weighted_scoring import load_weights, select_subset, combo_score, gate, unit_rows
+from weighted_scoring import load_weights, select_subset, combo_score, gate, unit_rows, prune_pool
 
 def test_weights_normalize():
     w = load_weights()
@@ -36,7 +37,197 @@ def test_noise_is_denied():
     assert select_subset(X, v, 3, pool=10)["verdict"] == "DENY"
 
 
-if __name__ == "__main__":      # runs without pytest: python tests/test_weighted.py
+def test_evidence_floor_validation():
+    import json
+    for value in (0, -0.1, 1.01, "high", None, True):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"evidence_floor": value}, f)
+            path = f.name
+        try:
+            try:
+                load_weights(path)
+                raise AssertionError(f"expected ValueError for evidence_floor={value!r}")
+            except ValueError as exc:
+                assert "evidence_floor" in str(exc)
+        finally:
+            os.unlink(path)
+
+def test_nonnumeric_scoring_weight_rejected():
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write('{"coherence": "high"}')
+        path = f.name
+    try:
+        try:
+            load_weights(path)
+            raise AssertionError("expected ValueError")
+        except ValueError as exc:
+            assert "coherence" in str(exc)
+    finally:
+        os.unlink(path)
+
+
+def test_recall_expected_handles_empty_and_short_rows():
+    from baseline import recall_at_k
+    D = np.array([[0.0, 1.0, 2.0], [1.0, 0.0, 1.5]])
+    true_rows = [[], [1, 2]]
+    approx_rows = [[], [1]]
+    assert recall_at_k(true_rows, approx_rows, D, 2) == 0.25
+
+
+def test_recall_returned_uses_returned_edge_denominator():
+    from baseline import recall_at_k
+    D = np.array([[0.0, 1.0, 2.0], [1.0, 0.0, 1.5]])
+    true_rows = [[1, 2], []]
+    approx_rows = [[1], [0, 1]]
+    assert abs(recall_at_k(
+        true_rows, approx_rows, D, 2, normalize="returned"
+    ) - (1.0 / 3.0)) < 1e-12
+
+
+def test_prune_pool_reports_truncation():
+    S = np.eye(4, dtype=float)
+    kept, truncated = prune_pool(S, np.ones(4), pool=2)
+    assert len(kept) == 2
+    assert truncated is True
+    kept_all, truncated_all = prune_pool(S, np.ones(4), pool=4)
+    assert kept_all == [0, 1, 2, 3]
+    assert truncated_all is False
+
+def test_select_subset_exposes_pruned_out():
+    X = np.random.default_rng(12).normal(size=(6, 4))
+    result = select_subset(X, np.ones(6), size=2, pool=4)
+    assert result["pool_size"] == 4
+    assert result["pruned_out"] is True
+
+def _assert_numpy_rng_state_equal(actual, expected):
+    assert actual[0] == expected[0]
+    assert np.array_equal(actual[1], expected[1])
+    assert actual[2:] == expected[2:]
+
+def test_run_annchor_persistent_rng_state_restoration_on_success():
+    import baseline
+
+    class FakeAnnchor:
+        def __init__(self, *args, **kwargs):
+            self.neighbor_graph = (np.array([[1], [0]]), np.zeros((2, 1)))
+        def fit(self):
+            np.random.random()
+
+    fake_module = types.SimpleNamespace(Annchor=FakeAnnchor)
+    cfg = {"anchors": 1, "k": 1, "p_work": 0.1}
+    np.random.seed(812)
+    before = np.random.get_state()
+    with patch.dict(sys.modules, {"annchor": fake_module}):
+        baseline.run_annchor(np.ones((2, 2)), "euclidean", cfg, seed=7)
+    _assert_numpy_rng_state_equal(np.random.get_state(), before)
+
+def test_run_annchor_persistent_rng_state_restoration_on_exception():
+    import baseline
+
+    class FakeAnnchor:
+        def __init__(self, *args, **kwargs):
+            pass
+        def fit(self):
+            np.random.random()
+            raise RuntimeError("deliberate test failure")
+
+    fake_module = types.SimpleNamespace(Annchor=FakeAnnchor)
+    cfg = {"anchors": 1, "k": 1, "p_work": 0.1}
+    np.random.seed(913)
+    before = np.random.get_state()
+    with patch.dict(sys.modules, {"annchor": fake_module}):
+        try:
+            baseline.run_annchor(np.ones((2, 2)), "euclidean", cfg, seed=9)
+            raise AssertionError("expected RuntimeError")
+        except RuntimeError as exc:
+            assert str(exc) == "deliberate test failure"
+    _assert_numpy_rng_state_equal(np.random.get_state(), before)
+
+def test_example_loads_weights_relative_to_script_not_cwd():
+    import json
+    from integrate_example import load_example_weights
+
+    with tempfile.TemporaryDirectory() as script_dir, tempfile.TemporaryDirectory() as other_dir:
+        script = os.path.join(script_dir, "integrate_example.py")
+        with open(os.path.join(script_dir, "weights.json"), "w") as f:
+            json.dump({
+                "coherence": 2, "weakest_link": 1, "trust": 1,
+                "evidence_floor": 0.4,
+            }, f)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(other_dir)
+            weights = load_example_weights(script)
+        finally:
+            os.chdir(old_cwd)
+        assert abs(weights["evidence_floor"] - 0.4) < 1e-12
+        assert abs(weights["coherence"] - 0.5) < 1e-12
+
+def test_example_missing_weights_uses_defaults_with_note():
+    import io
+    from contextlib import redirect_stdout
+    from integrate_example import load_example_weights
+
+    with tempfile.TemporaryDirectory() as script_dir:
+        script = os.path.join(script_dir, "integrate_example.py")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            weights = load_example_weights(script)
+        assert weights == load_weights()
+        assert "using built-in defaults" in output.getvalue()
+
+def test_zero_vector_combinations_remain_finite():
+    X = np.zeros((3, 2), dtype=float)
+    result = select_subset(X, np.full(3, 0.8), size=2, pool=3)
+    assert np.isfinite(result["score"])
+    assert np.isfinite(result["coherence"])
+    assert np.isfinite(result["weakest_link"])
+
+def test_equal_scores_use_lexicographically_smaller_combinations():
+    X = np.ones((3, 2), dtype=float)
+    result = select_subset(X, np.ones(3), size=2, pool=3, top_n=3)
+    assert result["indices"] == [0, 1]
+    assert [item["indices"] for item in result["runner_ups"]] == [
+        [0, 2], [1, 2]
+    ]
+
+def test_invalid_input_dimensions_raise_clear_value_error():
+    try:
+        select_subset(np.ones(3), np.ones(3), size=2)
+        raise AssertionError("expected ValueError for one-dimensional X")
+    except ValueError as exc:
+        assert "2D" in str(exc)
+
+    try:
+        select_subset(np.ones((3, 2)), np.ones((3, 1)), size=2)
+        raise AssertionError("expected ValueError for two-dimensional priors")
+    except ValueError as exc:
+        assert "one-dimensional" in str(exc)
+
+def test_max_combos_limit_is_enforced():
+    X = np.random.default_rng(23).normal(size=(5, 3))
+    try:
+        select_subset(X, np.ones(5), size=3, pool=5, max_combos=9)
+        raise AssertionError("expected ValueError for combination limit")
+    except ValueError as exc:
+        assert "too many combinations" in str(exc)
+
+def test_empty_retained_pool_has_clear_error():
+    try:
+        select_subset(np.empty((0, 5)), np.empty(0), size=2, pool=5)
+        raise AssertionError("expected ValueError for empty retained pool")
+    except ValueError as exc:
+        assert "at least 2 items" in str(exc)
+
+if __name__ == "__main__":      # runs without pytest: python test_weighted.py
+    failures = []
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
-            fn(); print("ok", name)
+            try:
+                fn()
+                print("ok", name)
+            except Exception as exc:
+                failures.append((name, exc))
+                print("FAIL", name, "--", exc)
+    if failures:
+        raise SystemExit(f"{len(failures)} test(s) failed")

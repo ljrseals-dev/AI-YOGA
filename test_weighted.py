@@ -176,6 +176,49 @@ def test_example_missing_weights_uses_defaults_with_note():
         assert weights == load_weights()
         assert "using built-in defaults" in output.getvalue()
 
+def test_zero_vector_combinations_remain_finite():
+    X = np.zeros((3, 2), dtype=float)
+    result = select_subset(X, np.full(3, 0.8), size=2, pool=3)
+    assert np.isfinite(result["score"])
+    assert np.isfinite(result["coherence"])
+    assert np.isfinite(result["weakest_link"])
+
+def test_equal_scores_use_lexicographically_smaller_combinations():
+    X = np.ones((3, 2), dtype=float)
+    result = select_subset(X, np.ones(3), size=2, pool=3, top_n=3)
+    assert result["indices"] == [0, 1]
+    assert [item["indices"] for item in result["runner_ups"]] == [
+        [0, 2], [1, 2]
+    ]
+
+def test_invalid_input_dimensions_raise_clear_value_error():
+    try:
+        select_subset(np.ones(3), np.ones(3), size=2)
+        raise AssertionError("expected ValueError for one-dimensional X")
+    except ValueError as exc:
+        assert "2D" in str(exc)
+
+    try:
+        select_subset(np.ones((3, 2)), np.ones((3, 1)), size=2)
+        raise AssertionError("expected ValueError for two-dimensional priors")
+    except ValueError as exc:
+        assert "one-dimensional" in str(exc)
+
+def test_max_combos_limit_is_enforced():
+    X = np.random.default_rng(23).normal(size=(5, 3))
+    try:
+        select_subset(X, np.ones(5), size=3, pool=5, max_combos=9)
+        raise AssertionError("expected ValueError for combination limit")
+    except ValueError as exc:
+        assert "too many combinations" in str(exc)
+
+def test_empty_retained_pool_has_clear_error():
+    try:
+        select_subset(np.empty((0, 5)), np.empty(0), size=2, pool=5)
+        raise AssertionError("expected ValueError for empty retained pool")
+    except ValueError as exc:
+        assert "at least 2 items" in str(exc)
+
 if __name__ == "__main__":      # runs without pytest: python test_weighted.py
     failures = []
     for name, fn in list(globals().items()):

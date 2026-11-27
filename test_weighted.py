@@ -143,6 +143,39 @@ def test_run_annchor_persistent_rng_state_restoration_on_exception():
             assert str(exc) == "deliberate test failure"
     _assert_numpy_rng_state_equal(np.random.get_state(), before)
 
+def test_example_loads_weights_relative_to_script_not_cwd():
+    import json
+    from integrate_example import load_example_weights
+
+    with tempfile.TemporaryDirectory() as script_dir, tempfile.TemporaryDirectory() as other_dir:
+        script = os.path.join(script_dir, "integrate_example.py")
+        with open(os.path.join(script_dir, "weights.json"), "w") as f:
+            json.dump({
+                "coherence": 2, "weakest_link": 1, "trust": 1,
+                "evidence_floor": 0.4,
+            }, f)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(other_dir)
+            weights = load_example_weights(script)
+        finally:
+            os.chdir(old_cwd)
+        assert abs(weights["evidence_floor"] - 0.4) < 1e-12
+        assert abs(weights["coherence"] - 0.5) < 1e-12
+
+def test_example_missing_weights_uses_defaults_with_note():
+    import io
+    from contextlib import redirect_stdout
+    from integrate_example import load_example_weights
+
+    with tempfile.TemporaryDirectory() as script_dir:
+        script = os.path.join(script_dir, "integrate_example.py")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            weights = load_example_weights(script)
+        assert weights == load_weights()
+        assert "using built-in defaults" in output.getvalue()
+
 if __name__ == "__main__":      # runs without pytest: python test_weighted.py
     failures = []
     for name, fn in list(globals().items()):

@@ -79,21 +79,27 @@ def rows_without_self(indices, k):
 
 def recall_at_k(true_rows, approx_rows, D, k, tol=1e-9, normalize="expected"):
     """Fraction of true k-NN recovered, accepting distance ties at the k-th
-    true-neighbour distance. Expected mode uses fixed k * row-count denominator,
-    so absent and short approximate rows count as misses.
+    true-neighbour distance.
+
+    "expected" uses fixed denominator k * number of true rows; missing edges
+    count as misses. "returned" divides by the number of approximate edges
+    actually evaluated (up to k per row), measuring correctness among returned
+    edges rather than expected-neighbour recall.
     """
-    if normalize != "expected":
-        raise ValueError("normalize must be 'expected'")
-    hit = 0
+    if normalize not in ("expected", "returned"):
+        raise ValueError("normalize must be 'expected' or 'returned'")
+    hit = returned = 0
     for i, t in enumerate(true_rows):
         a = approx_rows[i] if i < len(approx_rows) else []
+        edges = a[:k]
+        returned += len(edges)
         if not t:
             continue
         kth = D[i, t[-1]]
         tset = set(t)
-        for j in a[:k]:
+        for j in edges:
             hit += (j in tset) or (D[i, j] <= kth + tol)
-    total = k * len(true_rows)
+    total = k * len(true_rows) if normalize == "expected" else returned
     return hit / total if total else 0.0
 
 # ---------------------------------------------------------------- enumeration

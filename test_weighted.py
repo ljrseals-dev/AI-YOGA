@@ -73,6 +73,16 @@ def test_recall_expected_handles_empty_and_short_rows():
     assert recall_at_k(true_rows, approx_rows, D, 2) == 0.25
 
 
+def test_recall_returned_uses_returned_edge_denominator():
+    from baseline import recall_at_k
+    D = np.array([[0.0, 1.0, 2.0], [1.0, 0.0, 1.5]])
+    true_rows = [[1, 2], []]
+    approx_rows = [[1], [0, 1]]
+    assert abs(recall_at_k(
+        true_rows, approx_rows, D, 2, normalize="returned"
+    ) - (1.0 / 3.0)) < 1e-12
+
+
 if __name__ == "__main__":      # runs without pytest: python test_weighted.py
     failures = []
     for name, fn in list(globals().items()):

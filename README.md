@@ -11,34 +11,41 @@ government project, and it is not affiliated with or endorsed by GCHQ.
 
 Imagine you must pick the **best team of 4 people** from 80 candidates.
 
-- The careful way is to try **every possible team** and score each. That is always right, but the number of
-  teams explodes as the pool grows. This is **exhaustive search**.
-- The fast way is to look only at people who already look like good matches for each other and ignore the
-  rest. It is quick but can miss a good team. This is **approximate nearest-neighbor search** (ANNchor).
-- Before you act on the answer, a **referee** asks: "Is the evidence strong enough?" The referee says
-  **ALLOW**, **ESCALATE** (ask a human), or **DENY**. This is the **evidence-floor gate**.
+- The careful way is to try **every possible team** and score each. That is **exhaustive search**.
+- The fast way is to look for nearby candidates using a **k-nearest-neighbor graph**. An approximate graph such as ANNchor's can be faster, but may miss neighbors.
+- Before acting on a result, an **evidence-floor gate** classifies its score as **ALLOW**, **ESCALATE** (ask a human), or **DENY**.
 
-This repo does all three on the same data so you can measure what the fast way gives up, and it adds a
-**weighted score** (Section 3) so you decide what "best" means: how well the members fit together, how weak the
-weakest pair is, and how much you trust each member.
+This repository contains **two related but separate workflows**:
 
-For AI: replace "people" with "documents, tools, or facts an AI could use." The method picks the best
-set to hand to a model and refuses to proceed when the evidence is weak.
+1. `baseline.py` compares streamed exhaustive combination enumeration with NumPy exact k-NN, and has optional ANNchor and Gaffer paths. Its exhaustive objective is mean pairwise cosine similarity.
+2. `weighted_scoring.py` implements a separate weighted subset selector using coherence, weakest-link similarity, and supplied trust priors. `integrate_example.py` demonstrates that selector offline.
+
+**The baseline experiment does not import or invoke `weighted_scoring.py`.** The two workflows are in the same repository, but they are not one integrated pipeline. ANNchor is not currently wired into `weighted_scoring.py`'s pool-pruning function.
+
+For AI, the weighted example can be adapted to select documents, tools, or passages for a model. It is a reference implementation, not evidence that a production retrieval system is safe or accurate.
 
 ## 2. What's in the repo
 
 | File | Purpose |
 |---|---|
-| `baseline.py` | Experiment: exhaustive search vs exact k-NN vs ANNchor, recall@k, verdicts, optional Gaffer storage |
-| `weighted_scoring.py` | **Weighted** subset selection and the evidence-floor gate (the integration formula) |
-| `weights.json` | The weights and the floor. Edit this file to change behavior |
-| `integrate_example.py` | Offline example: choose passages for a RAG prompt |
-| `elements.json`, `types.json` | Gaffer schema (Item, Combination, CriticVerdict) |
-| `tests/test_weighted.py` | Unit tests for the formula |
-| `docs/MANUAL.md` | Full manual: setup, formula derivation, AI integration recipes, tuning, troubleshooting |
-| `docs/BASELINE_README.md` | The original baseline README, kept unchanged |
+| `baseline.py` | Experiment: streamed exhaustive search vs NumPy exact k-NN, optional ANNchor, verdicts, optional Gaffer storage |
+| `weighted_scoring.py` | Separate weighted subset selection and evidence-floor gate |
+| `weights.json` | Default scoring weights and evidence floor |
+| `integrate_example.py` | Offline example using the weighted selector for a RAG context set |
+| `elements.json`, `types.json` | Gaffer schema definitions (not validated against a live Gaffer service) |
+| `test_weighted.py` | Weighted-scoring unit tests; located at the repository root |
+| `MANUAL.md` | Setup, formula, integration recipes, tuning, and troubleshooting |
+| `BASELINE_README.md` | Documentation for the original exhaustive-search / ANNchor baseline |
 
-## 3. The formula (graduate-level statement)
+Other tracked files include `LICENSE`, `requirements.txt`, `push.sh`,
+`gaffer-annchor-baseline.zip`, `README (7).md`, and
+`research/exhaustive-set/IMPORT-AUDIT.md`.
+`README (7).md` is byte-identical to `README.md`; `requirements (1).txt`
+duplicates `requirements.txt`, and `push (1).sh` duplicates `push.sh`.
+The duplicate download-name files are retained in the current tree; they are
+not required by the workflows described here.
+
+## 3. The weighted formula (graduate-level statement)
 
 Let items \(i = 1..n\) have unit-normalized embeddings \(x_i\), cosine similarities \(s_{ij} = x_i \cdot x_j\),
 and trust priors \(v_i \in [0,1]\). For a combination \(C\) of size \(m\):
@@ -53,13 +60,10 @@ The gate with evidence floor \( \theta \):
 
 \[ \text{verdict}(C) = \begin{cases} \text{ALLOW} & S(C) \ge \theta \\ \text{ESCALATE} & 0.9\theta \le S(C) < \theta \\ \text{DENY} & S(C) < 0.9\theta \end{cases} \]
 
-Search: \( C^\* = \arg\max_{C \subseteq P,\ |C| = m} S(C) \), where \(P\) is a candidate pool pruned from the \(n\) items.
-Cost is \( \binom{|P|}{m} \cdot \binom{m}{2} \) similarity lookups, which is why pruning \(P\) matters.
-That is the role of ANNchor: build an approximate k-NN graph cheaply when the metric is slow, then enumerate exhaustively
-inside the pruned pool.
+The weighted selector searches combinations within a candidate pool \(P\) and returns the highest-scoring subset. Its current `prune_pool` implementation ranks candidates using supplied trust priors and local cosine density; it does not call ANNchor. The ANNchor path in `baseline.py` is a separate experiment.
 
 **Layman translation:** \(\mu\) is "how alike the group is on average", \(\lambda\) is "how bad is the worst pairing"
-(a chain is only as strong as its weakest link), \(\tau\) is "how much we trust the sources." The weights are
+(a chain is only as strong as its weakest link), and \(\tau\) is "how much we trust the sources." The weights are
 three dials that add to 100%. \(\theta\) is the bar the final score must clear.
 
 ### Default weights (`weights.json`)
@@ -78,19 +82,24 @@ These defaults are starting points chosen for illustration, **not** values fitte
 ```bash
 pip install -r requirements.txt
 python integrate_example.py                       # weighted selection demo
-python tests/test_weighted.py                     # formula tests
-python baseline.py --profile default --dry-run --no-annchor      # exhaustive vs exact k-NN
-python baseline.py --profile default --dry-run                   # + ANNchor (needs annchor)
+python test_weighted.py                            # weighted formula tests (root-level file)
+python baseline.py --profile default --dry-run --no-annchor      # NumPy baseline only
+python baseline.py --profile default --dry-run                   # + ANNchor (unverified)
 ```
 
 ## 5. What is verified and what is not
 
-**Verified in development:** the weighted formula and gate (unit tests), the exhaustive enumerator, the NumPy exact k-NN,
-recall@k logic, the three experiment profiles with `--no-annchor`.
+**Reported tested in development:** the weighted formula and gate (unit tests), the exhaustive enumerator, the NumPy exact k-NN,
+recall@k logic, and the three experiment profiles with `--no-annchor`. These reported runs have not been independently reproduced as part of this documentation correction.
 
 **Not verified:** real ANNchor calls and all Gaffer calls (no network in the build environment). The ANNchor code path
 was exercised only against a mock. Run it yourself and read `results.jsonl` (`annchor: ok` or `failed: ...`).
 Also unverified: the aggregate-function class names in `types.json`, which depend on your Gaffer version.
+
+**Profile geometry matters:** the `stress` profile uses Euclidean distance for k-NN construction, while exhaustive
+combinations are still scored by mean pairwise cosine similarity. The `wasserstein_demo` profile likewise uses
+Wasserstein distance for k-NN while exhaustive combinations remain cosine-scored. The k-NN and exhaustive
+measurements in those profiles therefore use different geometries and are not direct comparisons of the same objective.
 
 **Honest limits of the method:**
 1. Cosine similarity of embeddings is a proxy for relevance; it can be wrong.
@@ -99,8 +108,10 @@ Also unverified: the aggregate-function class names in `types.json`, which depen
 4. On random data, exhaustive vs k-NN verdicts differ because they score different sets of pairs, not because one method is better.
 5. "Weights" here means scoring weights. This repo does not ship trained neural-network weights.
 6. gafferpy is archived upstream; pin a version you have tested.
+7. No voice-cloning capability is demonstrated by this repository.
 
 ## 6. Licensing and attribution
 
-No license file is included yet; add one before publishing (GitHub's "Add a license" flow lists the options).
-Gaffer and ANNchor are separate projects under their own licenses; check them before redistribution.
+This repository is licensed under the MIT License; see [LICENSE](LICENSE).
+Gaffer and ANNchor are separate upstream projects under their own licenses; check
+those licenses before redistribution.
